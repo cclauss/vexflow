@@ -528,6 +528,10 @@ export class Accidental extends Modifier {
     }
   }
 
+  getType(): string {
+    return this.type;
+  }
+
   /** Attach this accidental to `note`, which must be a `StaveNote`. */
   setNote(note: Note): this {
     defined(note, 'ArgumentError', `Bad note value: ${note}`);

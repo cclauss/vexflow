@@ -22,6 +22,8 @@ import { Tables } from './tables';
 import { Category } from './typeguard';
 import { defined, log, midLine, RuntimeError } from './util';
 
+import type { Accidental } from './accidental';
+
 function showDeprecationWarningForNoteHeads(): void {
   // eslint-disable-next-line
   console.warn(
@@ -85,6 +87,24 @@ function shiftRestVertical(rest: StaveNoteFormatSettings, note: StaveNoteFormatS
   rest.maxLine += delta;
   rest.minLine += delta;
   rest.note.setKeyLine(0, rest.note.getKeyLine(0) + delta);
+}
+
+function shiftOneVoiceRight(noteU: StaveNoteFormatSettings, noteL: StaveNoteFormatSettings, voiceXShift: number): number {
+  const xShift = voiceXShift + 2;
+  if (noteU.stemDirection === noteL.stemDirection) {
+    // upper voice is middle voice, so shift it right
+    noteU.note.setXShift(xShift);
+  } else {
+    // shift lower voice right
+    noteL.note.setXShift(xShift);
+  }
+  return xShift;
+}
+
+// return true if two stave notes have a key on the same line but with different noteheads/
+function staveNotesCannotShareNoteheads(note1: StaveNote, note2: StaveNote): boolean {
+
+  return false;
 }
 
 // Called from formatNotes :: center a rest between two notes
@@ -167,7 +187,7 @@ export class StaveNote extends StemmableNote {
     }
 
     let voices = 0;
-    let noteU = undefined;
+    let noteU: StaveNoteFormatSettings | undefined = undefined;
     let noteM = undefined;
     let noteL = undefined;
     const draw = [false, false, false];
@@ -212,11 +232,13 @@ export class StaveNote extends StemmableNote {
     const voiceXShift = Math.max(noteU.voice_shift, noteL.voice_shift);
     let xShift = 0;
 
-    // Test for two voice note intersection
+    // Test for two voice note intersection -- should we reuse the same voiceXShift for both?
     if (voices === 2) {
+      // be stricter on line separation when two notes have stems in the same direction.
       const lineSpacing =
         noteU.note.hasStem() && noteL.note.hasStem() && noteU.stemDirection === noteL.stemDirection ? 0.0 : 0.5;
       if (noteL.isrest && noteU.isrest && noteU.note.duration === noteL.note.duration) {
+        // only draw one rest maximum. -- this is incorrect for Fugues, but generally true.
         noteL.note.render_options.draw = false;
       } else if (noteU.minLine <= noteL.maxLine + lineSpacing) {
         if (noteU.isrest) {
@@ -226,13 +248,26 @@ export class StaveNote extends StemmableNote {
           // shift rest down
           shiftRestVertical(noteL, noteU, -1);
         } else {
-          //Instead of shifting notes, remove the appropriate flag
-          //If we are sharing a line, switch one notes stem direction.
-          //If we are sharing a line and in the same voice, only then offset one note
+          // Instead of shifting notes, remove the appropriate flag
+          // If we are sharing a line, switch one note's stem direction.
+          // If we are sharing a line and in the same voice, only then offset one note
           const lineDiff = Math.abs(noteU.line - noteL.line);
+          // commented out for now, until we can find a way to determine if two
+          // noteheads share the same line but differ in accidentals
+          // (not necessarily displayed accidentals but given accidentals)
+          // if (
+          //   lineDiff === 0 &&
+          //   (noteU.note.getModifiersByType(Category.Accidental).length !==
+          //     noteL.note.getModifiersByType(Category.Accidental).length ||
+          //     (noteU.note.getModifiersByType(Category.Accidental).length !== 0 &&
+          //       (noteU.note.getModifiersByType(Category.Accidental)[0] as Accidental).getType() !==
+          //         (noteL.note.getModifiersByType(Category.Accidental)[0] as Accidental).getType()))
+          // ) {
+          //   // two notes on same line with different accidentals, must shift.
+          //   xShift = shiftOneVoiceRight(noteU, noteL, voiceXShift);
           if (noteU.note.hasStem() && noteL.note.hasStem()) {
-            //If we have different dot values, must offset
-            //Or If we have a white mixed with a black notehead, must offset
+            // If we have different dot values, must offset
+            // Or If we have a white mixed with a black notehead, must offset
             let whiteNoteHeadCount = 0;
             let blackNoteHeadCount = 0;
             if (Tables.durationToNumber(noteU.note.duration) === 2) {
@@ -249,26 +284,13 @@ export class StaveNote extends StemmableNote {
               (whiteNoteHeadCount !== 2 && blackNoteHeadCount !== 2) ||
               noteU.note.getModifiersByType(Category.Dot).length !== noteL.note.getModifiersByType(Category.Dot).length
             ) {
-              xShift = voiceXShift + 2;
-              if (noteU.stemDirection === noteL.stemDirection) {
-                // upper voice is middle voice, so shift it right
-                noteU.note.setXShift(xShift);
-              } else {
-                // shift lower voice right
-                noteL.note.setXShift(xShift);
-              }
+              // notes have different notehead colors or dots
+              xShift = shiftOneVoiceRight(noteU, noteL, voiceXShift);
             } else if (lineDiff < 1 && lineDiff > 0) {
-              //if the notes are quite close but not on the same line, shift
-              xShift = voiceXShift + 2;
-              if (noteU.stemDirection === noteL.stemDirection) {
-                // upper voice is middle voice, so shift it right
-                noteU.note.setXShift(xShift);
-              } else {
-                // shift lower voice right
-                noteL.note.setXShift(xShift);
-              }
+              // if the notes are quite close but not on the same line, shift
+              xShift = shiftOneVoiceRight(noteU, noteL, voiceXShift);
             } else if (noteU.note.voice !== noteL.note.voice) {
-              //If we are not in the same voice
+              // If we are not in the same voice
               if (noteU.stemDirection === noteL.stemDirection) {
                 if (noteU.line != noteL.line) {
                   xShift = voiceXShift + 2;
@@ -281,7 +303,7 @@ export class StaveNote extends StemmableNote {
                   }
                 }
               }
-            } //Very close whole notes
+            } // Very close whole notes (or breves)
           } else if (lineDiff < 1) {
             xShift = voiceXShift + 2;
             if (noteU.stemDirection === noteL.stemDirection) {
@@ -401,7 +423,7 @@ export class StaveNote extends StemmableNote {
   protected readonly clef: string;
   protected readonly octave_shift?: number;
 
-  protected displaced: boolean;
+  protected displaced: boolean; // is this note displaced to the right because of collision.
   protected dot_shiftY: number;
   protected use_default_head_x: boolean;
   protected ledgerLineStyle: ElementStyle;
@@ -610,6 +632,9 @@ export class StaveNote extends StemmableNote {
 
           // Have to mark the previous note as
           // displaced as well, for modifier placement
+          // (comment: it seems like we should use a separate prop for this,
+          // so that we can distinguish noteheads actually displaced from ones
+          // that have their modifiers displaced)
           if (this.keyProps.length > 0) {
             this.keyProps[i - 1].displaced = true;
           }
@@ -772,7 +797,7 @@ export class StaveNote extends StemmableNote {
     return this.displaced;
   }
 
-  // Sets whether shift note to the right. `displaced` is a `boolean`
+  // Sets whether to shift the note to the right. `displaced` is a `boolean`
   setNoteDisplaced(displaced: boolean): this {
     this.displaced = displaced;
     return this;

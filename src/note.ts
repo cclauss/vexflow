@@ -55,7 +55,7 @@ export interface NoteDuration {
 
 export interface ParsedNote {
   duration: string;
-  type: string;
+  type: string; // same as NoteStruct
   customTypes: string[];
   dots: number;
   ticks: number;
@@ -76,8 +76,8 @@ export interface NoteStruct {
 }
 
 /**
- * Note implements an abstract interface for notes and chords that
- * are rendered on a stave. Notes have some common properties: All of them
+ * Note implements an abstract interface for notes, chords, and other objects like TimeSignatures
+ * that are rendered on a stave. Notes have some common properties: All of them
  * have a value (e.g., pitch, fret, etc.) and a duration (quarter, half, etc.)
  *
  * Some notes have stems, heads, dots, etc. Most notational elements that
@@ -195,7 +195,7 @@ export abstract class Note extends Tickable {
       return undefined;
     }
 
-    // Add ticks as necessary depending on the numbr of dots
+    // Add ticks as necessary depending on the number of dots
     let currentTicks = ticks;
     for (let i = 0; i < dots; i++) {
       if (currentTicks <= 1) return undefined;
