@@ -239,7 +239,7 @@ export abstract class Note extends Tickable {
   protected duration: string;
   protected leftDisplacedHeadPx: number;
   protected rightDisplacedHeadPx: number;
-  protected noteType: string;
+  protected noteType: string; // from Tables.validNoteTypes
   protected customGlyphs: GlyphProps[];
   protected ys: number[];
   protected customTypes: string[];
@@ -496,7 +496,7 @@ export abstract class Note extends Tickable {
     return false;
   }
 
-  /** Accessor to note type. */
+  /** Accessor to note type, such as 'n' for note, 'r' for rest.  See Tables.validNoteTypes. */
   getNoteType(): string {
     return this.noteType;
   }

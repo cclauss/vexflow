@@ -22,8 +22,6 @@ import { Tables } from './tables';
 import { Category } from './typeguard';
 import { defined, log, midLine, RuntimeError } from './util';
 
-import type { Accidental } from './accidental';
-
 function showDeprecationWarningForNoteHeads(): void {
   // eslint-disable-next-line
   console.warn(
@@ -58,6 +56,13 @@ export interface StaveNoteFormatSettings {
   note: StaveNote;
 }
 
+interface OrderedNoteInfo {
+  voices: number;
+  noteU: StaveNoteFormatSettings | undefined;
+  noteM: StaveNoteFormatSettings | undefined;
+  noteL: StaveNoteFormatSettings | undefined;
+}
+
 export interface StaveNoteStruct extends NoteStruct {
   /** `Stem.UP` or `Stem.DOWN`. */
   stem_direction?: number;
@@ -89,7 +94,11 @@ function shiftRestVertical(rest: StaveNoteFormatSettings, note: StaveNoteFormatS
   rest.note.setKeyLine(0, rest.note.getKeyLine(0) + delta);
 }
 
-function shiftOneVoiceRight(noteU: StaveNoteFormatSettings, noteL: StaveNoteFormatSettings, voiceXShift: number): number {
+function shiftOneVoiceRight(
+  noteU: StaveNoteFormatSettings,
+  noteL: StaveNoteFormatSettings,
+  voiceXShift: number
+): number {
   const xShift = voiceXShift + 2;
   if (noteU.stemDirection === noteL.stemDirection) {
     // upper voice is middle voice, so shift it right
@@ -99,12 +108,6 @@ function shiftOneVoiceRight(noteU: StaveNoteFormatSettings, noteL: StaveNoteForm
     noteL.note.setXShift(xShift);
   }
   return xShift;
-}
-
-// return true if two stave notes have a key on the same line but with different noteheads/
-function staveNotesCannotShareNoteheads(note1: StaveNote, note2: StaveNote): boolean {
-
-  return false;
 }
 
 // Called from formatNotes :: center a rest between two notes
@@ -146,50 +149,50 @@ export class StaveNote extends StemmableNote {
     return musicFont.lookupMetric('noteHead.minPadding');
   }
 
-  /** Format notes inside a ModifierContext. */
-  static format(notes: StaveNote[], state: ModifierContextState): boolean {
-    if (!notes || notes.length < 2) return false;
-
+  protected static getStaveNoteFormatSettings(notes: StaveNote[]): StaveNoteFormatSettings[] {
     const notesList: StaveNoteFormatSettings[] = [];
 
-    for (let i = 0; i < notes.length; i++) {
+    for (const n of notes) {
       // Formatting uses sortedKeyProps to calculate line and minL.
-      const props = notes[i].sortedKeyProps;
-      const line = props[0].keyProps.line;
-      let minL = props[props.length - 1].keyProps.line;
-      const stemDirection = notes[i].getStemDirection();
-      const stemMax = notes[i].getStemLength() / 10;
-      const stemMin = notes[i].getStemMinimumLength() / 10;
+      const props = n.sortedKeyProps;
+      const lowestKeyLine = props[0].keyProps.line;
+      const highestKeyLine = props[props.length - 1].keyProps.line;
+      const stemDirection = n.getStemDirection();
+      const stemMax = n.getStemLength() / 10;
+      const stemMin = n.getStemMinimumLength() / 10;
 
-      let maxL;
-      if (notes[i].isRest()) {
-        maxL = line + notes[i].glyphProps.line_above;
-        minL = line - notes[i].glyphProps.line_below;
+      let maxL!: number;
+      let minL!: number;
+      if (n.isRest()) {
+        maxL = lowestKeyLine + n.glyphProps.line_above;
+        minL = lowestKeyLine - n.glyphProps.line_below;
       } else {
-        maxL =
-          stemDirection === 1 ? props[props.length - 1].keyProps.line + stemMax : props[props.length - 1].keyProps.line;
+        maxL = stemDirection === 1 ? highestKeyLine + stemMax : highestKeyLine;
 
-        minL = stemDirection === 1 ? props[0].keyProps.line : props[0].keyProps.line - stemMax;
+        minL = stemDirection === 1 ? lowestKeyLine : lowestKeyLine - stemMax;
       }
 
       notesList.push({
         line: props[0].keyProps.line, // note/rest base line
         maxLine: maxL, // note/rest upper bounds line
         minLine: minL, // note/rest lower bounds line
-        isrest: notes[i].isRest(),
+        isrest: n.isRest(),
         stemDirection: stemDirection,
         stemMax, // Maximum (default) note stem length;
         stemMin, // minimum note stem length
-        voice_shift: notes[i].getVoiceShiftWidth(),
-        is_displaced: notes[i].isDisplaced(), // note manually displaced
-        note: notes[i],
+        voice_shift: n.getVoiceShiftWidth(),
+        is_displaced: n.isDisplaced(), // note manually displaced
+        note: n,
       });
     }
+    return notesList;
+  }
 
+  protected static getOrderedNotes(notesList: StaveNoteFormatSettings[]): OrderedNoteInfo {
     let voices = 0;
     let noteU: StaveNoteFormatSettings | undefined = undefined;
-    let noteM = undefined;
-    let noteL = undefined;
+    let noteM: StaveNoteFormatSettings | undefined = undefined;
+    let noteL: StaveNoteFormatSettings | undefined = undefined;
     const draw = [false, false, false];
 
     for (let i = 0; i < notesList.length; i++) {
@@ -219,16 +222,95 @@ export class StaveNote extends StemmableNote {
       noteL = notesList[2];
     } else {
       // No shift required for less than 2 visible notes
-      return true;
+      voices = 1;
     }
-
     // for two voice backward compatibility, ensure upper voice is stems up
     // for three voices, the voices must be in order (upper, middle, lower)
-    if (voices === 2 && noteU.stemDirection === -1 && noteL.stemDirection === 1) {
+    if (voices === 2 && noteU?.stemDirection === Stem.DOWN && noteL?.stemDirection === Stem.UP) {
       noteU = notesList[1];
       noteL = notesList[0];
     }
 
+    return { voices, noteU, noteM, noteL };
+  }
+
+  /**
+   *  return true if two stave notes have a key on the same line but with different noteheads
+   *  etc.  Checks normal and custom noteheads.  Also checks for incompatible accidentals.
+   */
+  protected static staveNotesIncompatibleNoteheads(note1: StaveNote, note2: StaveNote): boolean {
+    if (
+      Tables.getGlyphProps(note1.duration, note1.noteType).code_head !==
+      Tables.getGlyphProps(note2.duration, note2.noteType).code_head
+    ) {
+      return true;
+    }
+
+    if (note1.isDisplaced() !== note2.isDisplaced()) {
+      return true;
+    }
+    if (note1.noteType !== note2.noteType) {
+      return true;
+    }
+    if (note1.customGlyphs.length !== note2.customGlyphs.length) {
+      return true;
+    }
+    for (let cg = 0; cg < note1.customGlyphs.length; cg++) {
+      if (note1.customGlyphs[cg] != note2.customGlyphs[cg]) {
+        return true;
+      }
+    }
+
+    const props_by_line: Record<number, KeyProps[]> = {};
+    for (const n of [note1, note2]) {
+      for (const kp of n.keyProps) {
+        if (props_by_line[kp.line] === undefined) {
+          props_by_line[kp.line] = [];
+        }
+        props_by_line[kp.line].push(kp);
+      }
+    }
+    for (const kp_list of Object.values(props_by_line)) {
+      if (kp_list.length < 2) {
+        continue;
+      }
+
+      // do not share if any line has 3 or more notes.
+      if (kp_list.length >= 3) {
+        return true;
+      }
+
+      // notice that it is possible for StaveNote1 to have C,C# E and
+      // SaveNote2 to have E G, G#, and we will say that they cannot share a
+      // notehead because there are two KeyProps from the same note on the same line.
+      // even though the E is perfectly sharable.  I think in this case, the chords
+      // will be so confusing that it is better not to have them share.
+
+      const [kp1, kp2] = kp_list;
+      if (kp1.int_value !== kp2.int_value) {
+        return true;
+      }
+      if (kp1.code != kp2.code) {
+        return true;
+      }
+      if (kp1.stroke != kp2.stroke) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /** Format notes inside a ModifierContext. */
+  static format(notes: StaveNote[], state: ModifierContextState): boolean {
+    // a single note alone in its own TickContext needs no formatting.
+    if (!notes || notes.length < 2) return false;
+
+    const notesList: StaveNoteFormatSettings[] = StaveNote.getStaveNoteFormatSettings(notes);
+    const { voices, noteU, noteM, noteL } = StaveNote.getOrderedNotes(notesList);
+    if (voices < 2 || !noteU || !noteL) {
+      return true;
+    }
     const voiceXShift = Math.max(noteU.voice_shift, noteL.voice_shift);
     let xShift = 0;
 
@@ -238,7 +320,7 @@ export class StaveNote extends StemmableNote {
       const lineSpacing =
         noteU.note.hasStem() && noteL.note.hasStem() && noteU.stemDirection === noteL.stemDirection ? 0.0 : 0.5;
       if (noteL.isrest && noteU.isrest && noteU.note.duration === noteL.note.duration) {
-        // only draw one rest maximum. -- this is incorrect for Fugues, but generally true.
+        // only draw one similar rest maximum. -- this is incorrect for Fugues, but generally true.
         noteL.note.render_options.draw = false;
       } else if (noteU.minLine <= noteL.maxLine + lineSpacing) {
         if (noteU.isrest) {
